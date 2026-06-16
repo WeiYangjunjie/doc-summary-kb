@@ -1,7 +1,20 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 // 路由表（按 CONTRACT.md 章节 8）
 const routes = [
+  {
+    path: '/login',
+    name: 'login',
+    component: () => import('@/views/LoginView.vue'),
+    meta: { title: '登录', guest: true }
+  },
+  {
+    path: '/register',
+    name: 'register',
+    component: () => import('@/views/RegisterView.vue'),
+    meta: { title: '注册', guest: true }
+  },
   {
     path: '/',
     component: () => import('@/layouts/MainLayout.vue'),
@@ -43,6 +56,18 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes
+})
+
+// ---------- 导航守卫 ----------
+router.beforeEach((to, from) => {
+  const auth = useAuthStore()
+
+  // guest 路由（login/register）：已登录则跳首页
+  if (to.meta?.guest && auth.isLoggedIn) {
+    return '/'
+  }
+
+  return true
 })
 
 router.afterEach((to) => {

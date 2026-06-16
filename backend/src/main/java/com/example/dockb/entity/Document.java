@@ -47,6 +47,10 @@ public class Document {
     @TableField("error_msg")
     private String errorMsg;
 
+    /** 上传者 user.id，NULL 表示公开文档（无主文档）。 */
+    @TableField("owner_id")
+    private Long ownerId;
+
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

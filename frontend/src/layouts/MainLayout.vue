@@ -31,6 +31,31 @@
         <el-tag :type="health.ok ? 'success' : 'danger'" size="small">
           {{ health.ok ? '后端在线' : '后端离线' }}
         </el-tag>
+
+        <!-- 已登录 -->
+        <template v-if="auth.isLoggedIn">
+          <el-dropdown trigger="click" @command="handleCommand">
+            <span class="user-avatar">
+              <el-icon><Avatar /></el-icon>
+              <span class="username">{{ auth.username }}</span>
+              <el-icon class="arrow"><ArrowDown /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="logout">
+                  <el-icon><SwitchButton /></el-icon>
+                  退出登录
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </template>
+
+        <!-- 未登录 -->
+        <template v-else>
+          <el-button size="small" @click="$router.push('/login')">登录</el-button>
+          <el-button size="small" type="primary" @click="$router.push('/register')">注册</el-button>
+        </template>
       </div>
     </el-header>
     <el-main class="layout-main">
@@ -45,11 +70,15 @@
 
 <script setup>
 import { computed, onMounted, onBeforeUnmount, reactive } from 'vue'
-import { useRoute } from 'vue-router'
-import { Document, House, Folder, ChatLineRound } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Document, House, Folder, ChatLineRound, Avatar, ArrowDown, SwitchButton } from '@element-plus/icons-vue'
 import { checkHealth } from '@/api/health'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
+
 const activeMenu = computed(() => {
   // 详情页仍高亮"文档管理"
   if (route.path.startsWith('/documents')) return '/documents'
@@ -67,6 +96,13 @@ const refreshHealth = async () => {
     health.ok = data?.status === 'up'
   } catch (e) {
     health.ok = false
+  }
+}
+
+const handleCommand = (cmd) => {
+  if (cmd === 'logout') {
+    auth.logout()
+    router.push('/login')
   }
 }
 
@@ -99,6 +135,23 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.user-avatar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #bfcbd9;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.2s;
+  font-size: 14px;
+}
+.user-avatar:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.user-avatar .arrow {
+  font-size: 12px;
 }
 .layout-main {
   background: var(--app-bg);

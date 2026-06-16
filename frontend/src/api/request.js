@@ -1,5 +1,8 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import router from '@/router'
+
+const TOKEN_KEY = 'auth_token'
 
 // axios 实例：统一前缀 /api，超时 30s
 const request = axios.create({
@@ -10,6 +13,11 @@ const request = axios.create({
 // ---------- 请求拦截器 ----------
 request.interceptors.request.use(
   (config) => {
+    // 自动附加 JWT Token
+    const token = localStorage.getItem(TOKEN_KEY)
+    if (token) {
+      config.headers['Authorization'] = `Bearer ${token}`
+    }
     // 文件上传时不主动改 Content-Type，让浏览器自动带 boundary
     if (config.data instanceof FormData) {
       delete config.headers['Content-Type']
@@ -49,11 +57,21 @@ request.interceptors.response.use(
     const status = error.response?.status
     const apiMsg = error.response?.data?.message
     let msg = apiMsg || error.message || '网络请求失败'
-    if (status === 401) msg = '未登录或登录已过期'
-    else if (status === 403) msg = '无权访问'
-    else if (status === 404) msg = '资源不存在'
-    else if (status === 413) msg = '文件过大'
-    else if (status >= 500) msg = `服务器错误 (${status})`
+    if (status === 401) {
+      msg = '未登录或登录已过期'
+      // 清除本地登录态并跳转登录页
+      localStorage.removeItem('auth_token')
+      localStorage.removeItem('auth_user')
+      router.push('/login')
+    } else if (status === 403) {
+      msg = '无权访问'
+    } else if (status === 404) {
+      msg = '资源不存在'
+    } else if (status === 413) {
+      msg = '文件过大'
+    } else if (status >= 500) {
+      msg = `服务器错误 (${status})`
+    }
 
     ElMessage.error(msg)
     return Promise.reject(error)

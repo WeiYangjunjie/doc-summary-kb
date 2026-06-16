@@ -6,6 +6,17 @@
 CREATE DATABASE IF NOT EXISTS doc_kb DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE doc_kb;
 
+-- 用户表
+CREATE TABLE IF NOT EXISTS user (
+    id          BIGINT       AUTO_INCREMENT PRIMARY KEY,
+    username    VARCHAR(64)  NOT NULL UNIQUE COMMENT '用户名',
+    password    VARCHAR(255) NOT NULL COMMENT 'BCrypt 加密后的密码',
+    role        VARCHAR(20)  NOT NULL DEFAULT 'USER' COMMENT 'USER / ADMIN',
+    created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS document (
     id            BIGINT       AUTO_INCREMENT PRIMARY KEY,
     title         VARCHAR(255) NOT NULL,
@@ -18,11 +29,13 @@ CREATE TABLE IF NOT EXISTS document (
     summary       TEXT         NULL COMMENT 'AI 摘要',
     status        VARCHAR(20)  NOT NULL DEFAULT 'pending' COMMENT 'pending/processing/done/failed',
     error_msg     VARCHAR(500) NULL,
+    owner_id      BIGINT       NULL COMMENT '上传者 user.id，NULL 表示公开文档',
     created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_category (category),
     INDEX idx_status (status),
-    INDEX idx_created (created_at)
+    INDEX idx_created (created_at),
+    INDEX idx_owner (owner_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS document_chunk (

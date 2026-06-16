@@ -75,6 +75,11 @@ logging:
 app:
   upload-dir: ${user.dir}/uploads
   chunk-size: 1000
+  jwt:
+    # 必须 ≥ 32 字符，生产环境请换掉
+    secret: doc-summary-kb-jwt-secret-key-2024-change-in-production
+    # 7 天
+    expiration-ms: 604800000
   search:
     max-candidates: 30
     snippet-radius: 80

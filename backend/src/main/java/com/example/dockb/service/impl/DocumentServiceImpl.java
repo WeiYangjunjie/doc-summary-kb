@@ -68,7 +68,7 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Long upload(MultipartFile file) throws IOException {
+    public Long upload(MultipartFile file, Long ownerId) throws IOException {
         if (file == null || file.isEmpty()) {
             throw new BizException(ResultCode.FILE_EMPTY);
         }
@@ -97,7 +97,7 @@ public class DocumentServiceImpl implements DocumentService {
             throw new BizException(ResultCode.UPLOAD_FAILED);
         }
 
-        // 写主表
+        // 写主表（owner_id = 当前登录用户）
         Document doc = new Document();
         String title = stripExt(original);
         doc.setTitle(title);
@@ -108,6 +108,7 @@ public class DocumentServiceImpl implements DocumentService {
         doc.setCategory("未分类");
         doc.setTags("");
         doc.setStatus("pending");
+        doc.setOwnerId(ownerId); // null = 公开文档
         documentMapper.insert(doc);
 
         // 同步切块（轻量；失败不影响上传）
@@ -125,11 +126,28 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Override
     public PageResult<DocumentVO> page(long page, long size, String keyword, String category) {
+        return page(page, size, keyword, category, null, false);
+    }
+
+    @Override
+    public PageResult<DocumentVO> page(long page, long size, String keyword, String category,
+                                      Long userId, boolean isAdmin) {
         if (page < 1) page = 1;
         if (size < 1) size = 10;
         if (size > 200) size = 200;
 
         LambdaQueryWrapper<Document> wrapper = new LambdaQueryWrapper<>();
+        // 可见性：ADMIN 可见所有；USER 可见公开(ownerId=null) + 自己的
+        if (!isAdmin) {
+            if (userId != null) {
+                wrapper.and(w -> w
+                        .isNull(Document::getOwnerId)
+                        .or()
+                        .eq(Document::getOwnerId, userId));
+            } else {
+                wrapper.isNull(Document::getOwnerId);
+            }
+        }
         if (keyword != null && !keyword.isBlank()) {
             wrapper.like(Document::getTitle, keyword.trim());
         }
@@ -192,8 +210,16 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     @Override
-    public List<String> listCategories() {
-        List<Document> all = documentMapper.selectList(null);
+    public List<String> listCategories(Long userId, boolean isAdmin) {
+        LambdaQueryWrapper<Document> wrapper = new LambdaQueryWrapper<>();
+        if (!isAdmin) {
+            if (userId != null) {
+                wrapper.and(w -> w.isNull(Document::getOwnerId).or().eq(Document::getOwnerId, userId));
+            } else {
+                wrapper.isNull(Document::getOwnerId);
+            }
+        }
+        List<Document> all = documentMapper.selectList(wrapper);
         Set<String> set = new HashSet<>();
         for (Document d : all) {
             if (d.getCategory() != null && !d.getCategory().isBlank()) {
@@ -207,6 +233,11 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Override
     public SearchResponseVO search(String q, int topK) {
+        return search(q, topK, null, false);
+    }
+
+    @Override
+    public SearchResponseVO search(String q, int topK, Long userId, boolean isAdmin) {
         if (q == null || q.isBlank()) {
             throw new BizException(ResultCode.BAD_REQUEST, "查询词 q 不能为空");
         }
@@ -232,8 +263,22 @@ public class DocumentServiceImpl implements DocumentService {
             documentMapper.selectBatchIds(docIds).forEach(d -> docMap.put(d.getId(), d));
         }
 
+        // 2.1) 权限过滤：移除用户无权访问的文档
+        List<DocumentChunk> visibleCandidates = candidates.stream()
+                .filter(c -> {
+                    Document d = docMap.get(c.getDocumentId());
+                    if (d == null) return false;
+                    if (isAdmin) return true;
+                    if (d.getOwnerId() == null) return true; // 公开文档
+                    return userId != null && d.getOwnerId().equals(userId);
+                })
+                .collect(Collectors.toList());
+        if (visibleCandidates.isEmpty()) {
+            return new SearchResponseVO(q, Collections.emptyList());
+        }
+
         // 3) 重排（带降级）
-        List<String> texts = candidates.stream()
+        List<String> texts = visibleCandidates.stream()
                 .map(DocumentChunk::getContent)
                 .collect(Collectors.toList());
         List<com.example.dockb.client.dto.RankedHit> ranked =
@@ -242,15 +287,15 @@ public class DocumentServiceImpl implements DocumentService {
         List<SearchHitVO> hits = new ArrayList<>();
         if (ranked.isEmpty()) {
             // 极端降级：原序
-            for (int i = 0; i < candidates.size(); i++) {
-                hits.add(buildHit(q, candidates.get(i), docMap.get(candidates.get(i).getDocumentId()), 0.5));
+            for (int i = 0; i < visibleCandidates.size(); i++) {
+                hits.add(buildHit(q, visibleCandidates.get(i), docMap.get(visibleCandidates.get(i).getDocumentId()), 0.5));
             }
         } else {
             for (com.example.dockb.client.dto.RankedHit r : ranked) {
-                if (r.getIndex() < 0 || r.getIndex() >= candidates.size()) {
+                if (r.getIndex() < 0 || r.getIndex() >= visibleCandidates.size()) {
                     continue;
                 }
-                DocumentChunk c = candidates.get(r.getIndex());
+                DocumentChunk c = visibleCandidates.get(r.getIndex());
                 Document d = docMap.get(c.getDocumentId());
                 hits.add(buildHit(q, c, d, r.getScore()));
                 if (hits.size() >= topK) {

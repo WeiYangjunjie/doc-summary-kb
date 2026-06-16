@@ -26,6 +26,7 @@ public class AppProperties {
     private Search search = new Search();
     private Async async = new Async();
     private Cors cors = new Cors();
+    private Jwt jwt = new Jwt();
 
     @Data
     public static class Search {
@@ -45,5 +46,13 @@ public class AppProperties {
     @Data
     public static class Cors {
         private List<String> allowedOrigins = new ArrayList<>();
+    }
+
+    @Data
+    public static class Jwt {
+        /** JWT 签名密钥（≥ 32 字符）。 */
+        private String secret = "doc-summary-kb-jwt-secret-key-2024-change-in-production";
+        /** Token 过期时间（毫秒），默认 7 天。 */
+        private long expirationMs = 604800000L;
     }
 }
