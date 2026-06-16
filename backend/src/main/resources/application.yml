@@ -1,0 +1,70 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+  tomcat:
+    max-http-form-post-size: 25MB
+
+spring:
+  application:
+    name: doc-summary-kb
+  datasource:
+    url: jdbc:mysql://localhost:3306/doc_kb?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
+      enabled: true
+  mvc:
+    async:
+      request-timeout: 60000
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+  global-config:
+    db-config:
+      id-type: AUTO
+      logic-delete-field: null
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  mapper-locations: classpath*:mapper/**/*.xml
+
+MiniMax:
+  api-key: REPLACE_WITH_YOUR_KEY
+  base-url: https://api.MiniMax.chat/v1
+  model: MiniMax-M3
+  connect-timeout-ms: 10000
+  read-timeout-ms: 60000
+  max-retries: 1
+
+logging:
+  level:
+    root: INFO
+    com.example.dockb: INFO
+    com.baomidou.mybatisplus: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+
+app:
+  upload-dir: ${user.dir}/uploads
+  chunk-size: 1000
+  search:
+    max-candidates: 30
+    snippet-radius: 80
+  async:
+    core-pool-size: 2
+    max-pool-size: 4
+    queue-capacity: 50
+  cors:
+    allowed-origins:
+      - http://localhost:5173
+      - http://127.0.0.1:5173

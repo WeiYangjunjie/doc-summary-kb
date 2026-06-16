@@ -1,0 +1,28 @@
+# IntelliJ / Eclipse
+.idea/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+.vscode/
+
+# Build outputs
+target/
+build/
+out/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads
+uploads/
+
+# Local config
+application-local.yml

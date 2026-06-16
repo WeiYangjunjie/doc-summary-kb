@@ -1,0 +1,97 @@
+# ============================================================
+# doc-summary-kb — top-level .gitignore
+# ============================================================
+
+# ---- Backend (Maven / Java / Spring Boot) ----
+backend/target/
+backend/.mvn/
+backend/mvnw
+backend/mvnw.cmd
+backend/.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+*.war
+*.ear
+hs_err_pid*
+replay_pid*
+
+# ---- Frontend (Node / Vite / Vue) ----
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+frontend/.nuxt/
+frontend/.parcel-cache/
+frontend/.next/
+frontend/coverage/
+
+# ---- Uploads (user-uploaded files; never commit) ----
+backend/uploads/
+uploads/
+*.tmp
+*.swp
+
+# ---- IDE / Editor ----
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+nbproject/private/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ---- Logs ----
+*.log
+logs/
+backend/logs/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+lerna-debug.log*
+
+# ---- Environment / secrets ----
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+backend/src/main/resources/application-local.yml
+backend/src/main/resources/application-prod.yml
+
+# ---- Build artifacts ----
+build/
+out/
+.gradle/
+.vercel/
+.turbo/
+
+# ---- Test outputs ----
+test-output/
+*.test
+*.spec.bak
+coverage/
+.nyc_output/
+
+# ---- Local DB dumps ----
+*.sql.bak
+*.dump
+
+# ---- Mavis internal (do not commit) ----
+.mavis/
+
+# ---- Agent self-review artifacts ----
+**/deliverable.md
+integration/test-output.txt
