@@ -16,4 +16,11 @@ public class QaAskRequest {
 
     /** 默认 5，范围 [1, 20]。 */
     private Integer topK;
+
+    /**
+     * 可选：指定本次问答使用的模型名称。
+     * 若为空，则使用当前激活的默认模型（ModelRegistry.activeModel）。
+     * 示例值：MiniMax-M3 / gpt-4o / gpt-3.5-turbo
+     */
+    private String model;
 }

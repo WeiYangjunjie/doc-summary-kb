@@ -77,32 +77,60 @@ public class DefaultM3Client implements M3Client {
         }
     }
 
+    // ==================== 分类 ====================
+
     @Override
     public String classify(String text, List<String> candidates) {
+        return classify(text, candidates, null);
+    }
+
+    @Override
+    public String classify(String text, List<String> candidates, String model) {
         String prompt = "你是文档分类助手。请从候选类别中选一个最合适的，**只返回类别名称本身**，不要其他任何内容。\n"
                 + "候选类别：" + String.join("、", candidates) + "\n"
                 + "文档内容（前 2000 字）：\n" + truncate(text, 2000);
-        String content = callAsString(prompt);
+        String content = callAsString(prompt, model);
         return matchCandidate(content, candidates);
     }
 
+    // ==================== 摘要 ====================
+
     @Override
     public String summarize(String text) {
+        return summarize(text, null);
+    }
+
+    @Override
+    public String summarize(String text, String model) {
         String prompt = "你是文档摘要助手。请用中文输出 200~500 字的摘要，要求保留核心观点，输出纯文本：\n"
                 + truncate(text, 6000);
-        return callAsString(prompt);
+        return callAsString(prompt, model);
     }
+
+    // ==================== 标签抽取 ====================
 
     @Override
     public List<String> extractTags(String text) {
-        String prompt = "你是关键词提取助手。请从下面的文档中提取 3~8 个关键标签，输出 **严格的 JSON 数组** 形式"
-                + "（如 [\"AI\",\"大模型\"]），不要其他任何说明：\n" + truncate(text, 4000);
-        String content = callAsString(prompt);
-        return parseStringList(content);
+        return extractTags(text, null);
     }
 
     @Override
+    public List<String> extractTags(String text, String model) {
+        String prompt = "你是关键词提取助手。请从下面的文档中提取 3~8 个关键标签，输出 **严格的 JSON 数组** 形式"
+                + "（如 [\"AI\",\"大模型\"]），不要其他任何说明：\n" + truncate(text, 4000);
+        String content = callAsString(prompt, model);
+        return parseStringList(content);
+    }
+
+    // ==================== 重排 ====================
+
+    @Override
     public List<RankedHit> rerank(String query, List<String> candidates) {
+        return rerank(query, candidates, null);
+    }
+
+    @Override
+    public List<RankedHit> rerank(String query, List<String> candidates, String model) {
         if (candidates == null || candidates.isEmpty()) {
             return Collections.emptyList();
         }
@@ -116,15 +144,22 @@ public class DefaultM3Client implements M3Client {
               .append("\n");
         }
         ChatResponse resp = callRaw(ChatRequest.builder()
-                .model(props.getModel())
+                .model(resolveModel(model))
                 .messages(List.of(ChatRequest.Message.builder().role("user").content(sb.toString()).build()))
                 .build());
         String content = resp == null ? null : resp.firstContent();
         return parseRerank(content, candidates.size());
     }
 
+    // ==================== 问答 ====================
+
     @Override
     public QaResult answer(String question, List<String> context) {
+        return answer(question, context, null);
+    }
+
+    @Override
+    public QaResult answer(String question, List<String> context, String model) {
         StringBuilder sb = new StringBuilder();
         sb.append("你是文档问答助手。请仅依据下面提供的【参考资料】回答用户问题。\n");
         sb.append("【参考资料】（每条前是 [i] 编号）：\n");
@@ -139,12 +174,58 @@ public class DefaultM3Client implements M3Client {
         sb.append("2. citations 必须引用上面资料中的编号；answer 用中文。");
 
         ChatResponse resp = callRaw(ChatRequest.builder()
-                .model(props.getModel())
+                .model(resolveModel(model))
                 .messages(List.of(ChatRequest.Message.builder().role("user").content(sb.toString()).build()))
                 .build());
         String content = resp == null ? null : resp.firstContent();
         return parseQa(content);
     }
+
+    // ==================== 流式问答 ====================
+
+    @Override
+    public Flux<String> answerStream(String question, List<String> context) {
+        return answerStream(question, context, null);
+    }
+
+    @Override
+    public Flux<String> answerStream(String question, List<String> context, String model) {
+        String effectiveModel = resolveModel(model);
+        log.info("[M3] answerStream model={}", effectiveModel);
+        // 构建 prompt
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("你是文档问答助手。请仅依据下面提供的【参考资料】回答用户问题。\n");
+        prompt.append("【参考资料】（每条前是 [i] 编号）：\n");
+        if (context != null) {
+            for (int i = 0; i < context.size(); i++) {
+                prompt.append("[").append(i).append("] ").append(truncate(context.get(i), 1500)).append("\n");
+            }
+        }
+        prompt.append("\n用户问题：").append(question).append("\n");
+        prompt.append("要求：\n");
+        prompt.append("1. 仅返回 **严格的 JSON**，形如 {\"answer\":\"...\",\"citations\":[{\"index\":0,\"snippet\":\"...\"}]}；\n");
+        prompt.append("2. citations 必须引用上面资料中的编号；answer 用中文。");
+
+        ChatRequest request = ChatRequest.builder()
+                .model(effectiveModel)
+                .stream(true)
+                .messages(List.of(ChatRequest.Message.builder()
+                        .role("user")
+                        .content(prompt.toString())
+                        .build()))
+                .build();
+
+        return Flux.create(emitter -> {
+            try {
+                doStreamAnswer(request, emitter);
+            } catch (Exception e) {
+                log.error("[M3] answerStream error: {}", e.getMessage());
+                emitter.error(new M3Exception("M3 streaming failed: " + e.getMessage(), e));
+            }
+        }, FluxSink.OverflowStrategy.BUFFER);
+    }
+
+    // ==================== 通用 ====================
 
     @Override
     public ChatResponse chat(ChatRequest request) {
@@ -153,9 +234,17 @@ public class DefaultM3Client implements M3Client {
 
     // ----------------------------- 内部工具 -----------------------------
 
+    private String resolveModel(String model) {
+        return (model != null && !model.isBlank()) ? model : props.getModel();
+    }
+
     private String callAsString(String userPrompt) {
+        return callAsString(userPrompt, null);
+    }
+
+    private String callAsString(String userPrompt, String model) {
         ChatResponse resp = callRaw(ChatRequest.builder()
-                .model(props.getModel())
+                .model(resolveModel(model))
                 .messages(List.of(ChatRequest.Message.builder().role("user").content(userPrompt).build()))
                 .build());
         String content = resp == null ? null : resp.firstContent();
@@ -344,54 +433,14 @@ public class DefaultM3Client implements M3Client {
 
     @Override
     public Flux<String> answerStream(String question, List<String> context) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("你是文档问答助手。请仅依据下面提供的【参考资料】回答用户问题。\n");
-        prompt.append("【参考资料】（每条前是 [i] 编号）：\n");
-        if (context != null) {
-            for (int i = 0; i < context.size(); i++) {
-                prompt.append("[").append(i).append("] ").append(truncate(context.get(i), 1500)).append("\n");
-            }
-        }
-        prompt.append("\n用户问题：").append(question).append("\n");
-        prompt.append("要求：\n");
-        prompt.append("1. 仅返回 **严格的 JSON**，形如 {\"answer\":\"...\",\"citations\":[{\"index\":0,\"snippet\":\"...\"}]}；\n");
-        prompt.append("2. citations 必须引用上面资料中的编号；answer 用中文。");
-
-        ChatRequest request = ChatRequest.builder()
-                .model(props.getModel())
-                .stream(true)
-                .messages(List.of(ChatRequest.Message.builder()
-                        .role("user")
-                        .content(prompt.toString())
-                        .build()))
-                .build();
-
-        String url = trimTrailingSlash(props.getBaseUrl()) + "/chat/completions";
-
-        return Flux.create(emitter -> {
-            try {
-                var responseSpec = streamingRestClient.post()
-                        .uri(url)
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + props.resolveApiKey())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(request)
-                        .retrieve()
-                        .body(io.netty.handler.codec.http.HttpHeaders.class);
-
-                // streamingRestClient with RestClient doesn't directly support Flux.
-                // Fallback: use InputStream directly.
-                doStreamAnswer(url, request, emitter);
-            } catch (Exception e) {
-                log.error("[M3] answerStream error: {}", e.getMessage());
-                emitter.error(new M3Exception("M3 streaming failed: " + e.getMessage(), e));
-            }
-        }, FluxSink.OverflowStrategy.BUFFER);
+        return answerStream(question, context, null);
     }
 
     /**
-     * 直接用 HttpClient 读 SSE 流，避免 RestClient reactive 类型问题。
+     * 用 java.net.http HttpClient 发送 SSE 流式请求，提取 token 并 emit。
      */
-    private void doStreamAnswer(String url, ChatRequest request, FluxSink<String> emitter) {
+    private void doStreamAnswer(ChatRequest request, FluxSink<String> emitter) {
+        String url = trimTrailingSlash(props.getBaseUrl()) + "/chat/completions";
         try {
             java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
             String jsonBody = objectMapper.writeValueAsString(request);
@@ -416,7 +465,6 @@ public class DefaultM3Client implements M3Client {
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
                 String line;
-                StringBuilder dataBuf = new StringBuilder();
                 while ((line = reader.readLine()) != null) {
                     if (line.startsWith("data: ")) {
                         String data = line.substring("data: ".length()).trim();
@@ -425,7 +473,6 @@ public class DefaultM3Client implements M3Client {
                             emitter.complete();
                             return;
                         }
-                        // 解析 SSE JSON chunk，提取 delta.content
                         try {
                             JsonNode chunk = objectMapper.readTree(data);
                             JsonNode delta = chunk.path("choices")
@@ -433,11 +480,9 @@ public class DefaultM3Client implements M3Client {
                                     .path("delta")
                                     .path("content");
                             if (!delta.isMissingNode()) {
-                                String token = delta.asText();
-                                emitter.next(token);
+                                emitter.next(delta.asText());
                             }
                         } catch (JsonProcessingException e) {
-                            // 忽略解析失败的 chunk
                             log.debug("[M3] stream chunk parse failed: {}", data);
                         }
                     }

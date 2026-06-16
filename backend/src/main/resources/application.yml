@@ -46,6 +46,24 @@ MiniMax:
   read-timeout-ms: 60000
   max-retries: 1
 
+# AI 模型配置：支持多模型切换
+ai:
+  # 当前激活的默认模型（运行时可通过 POST /api/models/switch 切换）
+  active-model: MiniMax-M3
+  models:
+    - name: MiniMax-M3
+      provider: MiniMax
+      description: MiniMax M3 模型，支持高质量问答与流式输出
+      supports-stream: true
+    - name: gpt-4o
+      provider: OpenAI
+      description: GPT-4o，适用于复杂推理与长文档理解
+      supports-stream: true
+    - name: gpt-3.5-turbo
+      provider: OpenAI
+      description: GPT-3.5 Turbo，快速响应，低成本
+      supports-stream: true
+
 logging:
   level:
     root: INFO

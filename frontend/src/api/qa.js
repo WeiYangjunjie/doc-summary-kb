@@ -2,7 +2,7 @@ import request from './request'
 
 /**
  * 提问
- * @param {{question:string, topK?:number}} body
+ * @param {{question:string, topK?:number, model?:string}} body
  */
 export function askQuestion(body) {
   return request.post('/qa/ask', body)

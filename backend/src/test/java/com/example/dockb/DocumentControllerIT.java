@@ -4,6 +4,7 @@ import com.example.dockb.client.M3Client;
 import com.example.dockb.client.dto.QaResult;
 import com.example.dockb.common.PageResult;
 import com.example.dockb.config.M3Properties;
+import com.example.dockb.config.ai.ModelRegistry;
 import com.example.dockb.controller.DocumentController;
 import com.example.dockb.controller.HealthController;
 import com.example.dockb.mapper.DocumentMapper;
@@ -49,6 +50,9 @@ class DocumentControllerIT {
 
     @MockBean
     private M3Client m3Client;
+
+    @MockBean
+    private ModelRegistry modelRegistry;
 
     @MockBean
     private DocumentService documentService;

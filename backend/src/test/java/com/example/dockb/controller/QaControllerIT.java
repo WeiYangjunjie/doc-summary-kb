@@ -3,6 +3,7 @@ package com.example.dockb.controller;
 import com.example.dockb.client.M3Client;
 import com.example.dockb.client.dto.QaResult;
 import com.example.dockb.common.PageResult;
+import com.example.dockb.config.ai.ModelRegistry;
 import com.example.dockb.dto.QaAskRequest;
 import com.example.dockb.entity.DocumentChunk;
 import com.example.dockb.mapper.DocumentChunkMapper;
@@ -46,6 +47,9 @@ class QaControllerIT {
 
     @MockBean
     private M3Client m3Client;
+
+    @MockBean
+    private ModelRegistry modelRegistry;
 
     @MockBean
     private DocumentChunkMapper chunkMapper;

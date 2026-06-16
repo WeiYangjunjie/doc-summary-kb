@@ -10,37 +10,58 @@ import reactor.core.publisher.Flux;
 import java.util.List;
 
 /**
- * M3 客户端接口（契约 §6）。
+ * AI 模型客户端接口。
  *
- * <p>所有方法在 M3 不可达或返回解析失败时抛 {@link M3Exception}。
+ * <p>支持多模型：每个方法均有 model 参数版本，若 model 为空则使用默认模型。
+ * 所有方法在模型不可达或解析失败时抛 {@link M3Exception}。
  */
 public interface M3Client {
 
     /** 简单可达性探测。 */
     boolean ping();
 
-    /** 分类：从候选类别中挑一个最合适的。 */
+    // ==================== 分类 ====================
+
     String classify(String text, List<String> candidates);
 
-    /** 摘要：返回 200~500 字。 */
+    /**
+     * 指定模型分类。
+     * @param model 若为空则使用配置的默认模型
+     */
+    String classify(String text, List<String> candidates, String model);
+
+    // ==================== 摘要 ====================
+
     String summarize(String text);
 
-    /** 抽取 tags（逗号或 JSON 数组）。 */
+    String summarize(String text, String model);
+
+    // ==================== 标签抽取 ====================
+
     List<String> extractTags(String text);
 
-    /** 重排：返回按相关性倒序排列的 (原下标, score)。 */
+    List<String> extractTags(String text, String model);
+
+    // ==================== 重排 ====================
+
     List<RankedHit> rerank(String query, List<String> candidates);
 
-    /** 问答 + 引用：返回模型生成的答案与引用下标/片段。 */
+    List<RankedHit> rerank(String query, List<String> candidates, String model);
+
+    // ==================== 问答 ====================
+
     QaResult answer(String question, List<String> context);
+
+    QaResult answer(String question, List<String> context, String model);
+
+    // ==================== 流式问答 ====================
+
+    Flux<String> answerStream(String question, List<String> context);
+
+    Flux<String> answerStream(String question, List<String> context, String model);
+
+    // ==================== 通用 ====================
 
     /** 通用调用入口（用于自定义 prompt）。 */
     ChatResponse chat(ChatRequest request);
-
-    /**
-     * 流式问答：返回一个 Flux，逐 token/逐片段地 emit M3 返回的内容。
-     * SSE 格式，每条 data 为纯文本 token。
-     * 末尾会 emit "[DONE]" 表示流结束。
-     */
-    Flux<String> answerStream(String question, List<String> context);
 }

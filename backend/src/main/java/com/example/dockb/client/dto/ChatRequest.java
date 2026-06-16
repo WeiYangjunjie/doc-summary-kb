@@ -22,6 +22,9 @@ public class ChatRequest {
     private String model;
     private List<Message> messages;
 
+    /** 是否启用流式输出（SSE）。 */
+    private Boolean stream;
+
     /** 可选：覆盖默认 temperature。 */
     private Double temperature;
 

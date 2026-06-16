@@ -1,11 +1,9 @@
 package com.example.dockb.controller;
 
-import com.example.dockb.client.M3Client;
 import com.example.dockb.common.Result;
 import com.example.dockb.dto.QaAskRequest;
 import com.example.dockb.service.QaService;
 import com.example.dockb.vo.QaAnswerVO;
-import com.example.dockb.vo.QaHistoryVO;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -17,8 +15,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
-import java.util.List;
-
 /**
  * 问答接口（契约 §5.4）。
  */
@@ -28,16 +24,15 @@ import java.util.List;
 public class QaController {
 
     private final QaService qaService;
-    private final M3Client m3Client;
 
-    public QaController(QaService qaService, M3Client m3Client) {
+    public QaController(QaService qaService) {
         this.qaService = qaService;
-        this.m3Client = m3Client;
     }
 
     @PostMapping("/ask")
     public Result<QaAnswerVO> ask(@Valid @RequestBody QaAskRequest req) {
-        return Result.success(qaService.ask(req.getQuestion(), req.getTopK()));
+        log.info("[QA] ask: question={}, topK={}, model={}", req.getQuestion(), req.getTopK(), req.getModel());
+        return Result.success(qaService.ask(req.getQuestion(), req.getTopK(), req.getModel()));
     }
 
     /**
@@ -47,11 +42,8 @@ public class QaController {
      */
     @PostMapping(value = "/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> askStream(@Valid @RequestBody QaAskRequest req) {
-        log.info("[QA] stream ask: question={}, topK={}", req.getQuestion(), req.getTopK());
-        // buildContext 直接返回上下文字符串列表
-        List<String> context = qaService.buildContext(req.getQuestion(), req.getTopK());
-
-        Flux<String> stream = m3Client.answerStream(req.getQuestion(), context);
+        log.info("[QA] stream ask: question={}, topK={}, model={}", req.getQuestion(), req.getTopK(), req.getModel());
+        Flux<String> stream = qaService.askStream(req.getQuestion(), req.getTopK(), req.getModel());
 
         // 收集完整答案，结束后异步存库
         StringBuilder fullAnswer = new StringBuilder();
@@ -64,7 +56,6 @@ public class QaController {
                 .doOnComplete(() -> {
                     String answer = fullAnswer.toString();
                     log.info("[QA] stream done, answer length={}", answer.length());
-                    // 异步存历史（不阻塞响应）
                     try {
                         qaService.saveHistoryAsync(req.getQuestion(), answer);
                     } catch (Exception e) {

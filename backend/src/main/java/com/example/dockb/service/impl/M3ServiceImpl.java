@@ -4,9 +4,11 @@ import com.example.dockb.client.M3Client;
 import com.example.dockb.client.M3Exception;
 import com.example.dockb.client.dto.QaResult;
 import com.example.dockb.client.dto.RankedHit;
+import com.example.dockb.config.ai.ModelRegistry;
 import com.example.dockb.service.M3Service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -20,6 +22,8 @@ import java.util.Set;
 
 /**
  * M3Service 默认实现：M3 失败时按关键字/启发式降级，不影响主流程。
+ *
+ * <p>支持按请求指定模型（优先）或使用当前激活的默认模型。
  */
 @Slf4j
 @Service
@@ -30,14 +34,22 @@ public class M3ServiceImpl implements M3Service {
             "的", "了", "和", "与", "或", "是", "在", "我", "你", "他", "她", "它", "们"));
 
     private final M3Client m3Client;
+    private final ModelRegistry modelRegistry;
 
-    public M3ServiceImpl(M3Client m3Client) {
+    public M3ServiceImpl(M3Client m3Client, ModelRegistry modelRegistry) {
         this.m3Client = m3Client;
+        this.modelRegistry = modelRegistry;
+    }
+
+    private String effectiveModel(String model) {
+        return (model != null && !model.isBlank()) ? model : modelRegistry.getActiveModel();
     }
 
     @Override
-    public boolean isReachable() {
+    public boolean isReachable(String model) {
         try {
+            String effective = effectiveModel(model);
+            // ping 不传 model 用默认的探测
             return m3Client.ping();
         } catch (Exception e) {
             log.debug("[M3Service] ping error: {}", e.getMessage());
@@ -47,68 +59,93 @@ public class M3ServiceImpl implements M3Service {
 
     @Override
     public String classifyWithFallback(String text, List<String> candidates, String defaultCategory) {
+        return classifyWithFallback(text, candidates, defaultCategory, null);
+    }
+
+    @Override
+    public String classifyWithFallback(String text, List<String> candidates, String defaultCategory, String model) {
         try {
-            return m3Client.classify(text, candidates);
+            return m3Client.classify(text, candidates, effectiveModel(model));
         } catch (M3Exception | RuntimeException e) {
-            log.warn("[M3Service] classify fallback: {}", e.getMessage());
+            log.warn("[M3Service] classify (model={}) fallback: {}", model, e.getMessage());
             return classifyByKeyword(text, candidates, defaultCategory);
         }
     }
 
     @Override
     public String summarizeWithFallback(String text, String defaultSummary) {
+        return summarizeWithFallback(text, defaultSummary, null);
+    }
+
+    @Override
+    public String summarizeWithFallback(String text, String defaultSummary, String model) {
         try {
-            String s = m3Client.summarize(text);
+            String s = m3Client.summarize(text, effectiveModel(model));
             if (s != null && !s.isBlank()) {
                 return s;
             }
         } catch (M3Exception | RuntimeException e) {
-            log.warn("[M3Service] summarize fallback: {}", e.getMessage());
+            log.warn("[M3Service] summarize (model={}) fallback: {}", model, e.getMessage());
         }
         return defaultSummary != null ? defaultSummary : truncate(text, 300);
     }
 
     @Override
     public List<String> extractTagsWithFallback(String text, List<String> defaults) {
+        return extractTagsWithFallback(text, defaults, null);
+    }
+
+    @Override
+    public List<String> extractTagsWithFallback(String text, List<String> defaults, String model) {
         try {
-            List<String> tags = m3Client.extractTags(text);
+            List<String> tags = m3Client.extractTags(text, effectiveModel(model));
             if (tags != null && !tags.isEmpty()) {
                 return tags;
             }
         } catch (M3Exception | RuntimeException e) {
-            log.warn("[M3Service] extractTags fallback: {}", e.getMessage());
+            log.warn("[M3Service] extractTags (model={}) fallback: {}", model, e.getMessage());
         }
         return defaults != null ? defaults : Collections.emptyList();
     }
 
     @Override
     public List<RankedHit> rerankWithFallback(String query, List<String> candidates) {
+        return rerankWithFallback(query, candidates, null);
+    }
+
+    @Override
+    public List<RankedHit> rerankWithFallback(String query, List<String> candidates, String model) {
         if (candidates == null || candidates.isEmpty()) {
             return Collections.emptyList();
         }
         try {
-            List<RankedHit> ranked = m3Client.rerank(query, candidates);
+            List<RankedHit> ranked = m3Client.rerank(query, candidates, effectiveModel(model));
             if (ranked != null && !ranked.isEmpty()) {
                 return ranked;
             }
         } catch (M3Exception | RuntimeException e) {
-            log.warn("[M3Service] rerank fallback: {}", e.getMessage());
+            log.warn("[M3Service] rerank (model={}) fallback: {}", model, e.getMessage());
         }
         return tfRank(query, candidates);
     }
 
     @Override
     public QaResult answerWithFallback(String question, List<String> context) {
+        return answerWithFallback(question, context, null);
+    }
+
+    @Override
+    public QaResult answerWithFallback(String question, List<String> context, String model) {
         if (context == null || context.isEmpty()) {
             return new QaResult("知识库中暂无相关资料。", Collections.emptyList());
         }
         try {
-            QaResult r = m3Client.answer(question, context);
+            QaResult r = m3Client.answer(question, context, effectiveModel(model));
             if (r != null && r.getAnswer() != null && !r.getAnswer().isBlank()) {
                 return r;
             }
         } catch (M3Exception | RuntimeException e) {
-            log.warn("[M3Service] answer fallback: {}", e.getMessage());
+            log.warn("[M3Service] answer (model={}) fallback: {}", model, e.getMessage());
         }
         // 降级：拼接 top2 上下文作为答案
         List<QaResult.Citation> cites = new ArrayList<>();
@@ -119,6 +156,13 @@ public class M3ServiceImpl implements M3Service {
             sb.append("- ").append(truncate(context.get(i), 300)).append("\n");
         }
         return new QaResult(sb.toString(), cites);
+    }
+
+    @Override
+    public Flux<String> answerStream(String question, List<String> context, String model) {
+        String effective = effectiveModel(model);
+        log.info("[M3Service] answerStream model={}", effective);
+        return m3Client.answerStream(question, context, effective);
     }
 
     // ----------------------------- 降级策略 -----------------------------

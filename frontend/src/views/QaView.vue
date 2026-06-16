@@ -15,10 +15,28 @@
             show-word-limit
           />
           <div class="toolbar" style="margin-top:12px">
-            <el-select v-model="topK" style="width:120px">
+            <el-select v-model="topK" style="width:100px">
               <el-option :value="3" label="top 3" />
               <el-option :value="5" label="top 5" />
               <el-option :value="10" label="top 10" />
+            </el-select>
+            <!-- 模型选择器 -->
+            <el-select v-model="selectedModel" style="width:180px;margin-left:8px" placeholder="选择模型">
+              <template #prefix>
+                <el-icon><Cpu /></el-icon>
+              </template>
+              <el-option
+                v-for="m in modelList"
+                :key="m.name"
+                :label="m.description || m.name"
+                :value="m.name"
+              >
+                <div class="model-option">
+                  <span class="model-name">{{ m.name }}</span>
+                  <el-tag v-if="m.active" type="success" size="small">当前</el-tag>
+                  <span class="model-provider">{{ m.provider }}</span>
+                </div>
+              </el-option>
             </el-select>
             <el-tooltip content="开启后回答会逐字流式显示">
               <el-switch
@@ -135,9 +153,10 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Promotion, Delete, RefreshRight } from '@element-plus/icons-vue'
+import { Promotion, Delete, RefreshRight, Cpu } from '@element-plus/icons-vue'
 import CitationItem from '@/components/CitationItem.vue'
 import { askQuestion, askQuestionStream, listQaHistory } from '@/api/qa'
+import { listModels } from '@/api/model'
 import { relativeTime } from '@/utils/format'
 
 // 当前提问
@@ -148,6 +167,26 @@ const streamMode = ref(true) // 默认开启流式
 const currentAnswer = ref(null)
 const streamText = ref('') // 流式累积文字
 let cancelStream = null // 流式取消函数
+
+// 模型选择
+const modelList = ref([])
+const selectedModel = ref('')
+
+const loadModels = async () => {
+  try {
+    const list = await listModels()
+    modelList.value = list || []
+    const active = list?.find(m => m.active)
+    if (active) {
+      selectedModel.value = active.name
+    } else if (list?.length > 0) {
+      selectedModel.value = list[0].name
+    }
+  } catch (e) {
+    // 模型列表获取失败，不影响主流程
+    console.warn('[QaView] loadModels failed:', e)
+  }
+}
 
 // 流式 HTML：换行渲染
 const streamHtml = computed(() => {
@@ -171,32 +210,32 @@ const onAsk = async () => {
   currentAnswer.value = null
   asking.value = true
 
+  const payload = {
+    question: question.value.trim(),
+    topK: topK.value,
+    model: selectedModel.value || undefined,
+  }
+
   if (streamMode.value) {
     // 流式模式
-    cancelStream = askQuestionStream(
-      { question: question.value.trim(), topK: topK.value },
-      {
-        onToken(token) {
-          streamText.value += token
-        },
-        onDone() {
-          asking.value = false
-          ElMessage.success('回答已生成并保存')
-          loadHistory()
-        },
-        onError(err) {
-          asking.value = false
-          ElMessage.error('流式请求失败：' + err.message)
-        },
-      }
-    )
+    cancelStream = askQuestionStream(payload, {
+      onToken(token) {
+        streamText.value += token
+      },
+      onDone() {
+        asking.value = false
+        ElMessage.success('回答已生成并保存')
+        loadHistory()
+      },
+      onError(err) {
+        asking.value = false
+        ElMessage.error('流式请求失败：' + err.message)
+      },
+    })
   } else {
     // 普通模式
     try {
-      const data = await askQuestion({
-        question: question.value.trim(),
-        topK: topK.value,
-      })
+      const data = await askQuestion(payload)
       currentAnswer.value = data
       ElMessage.success('已生成回答')
       loadHistory()
@@ -250,7 +289,7 @@ const reuse = (item) => {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-onMounted(loadHistory)
+onMounted(() => { loadModels(); loadHistory() })
 </script>
 
 <style scoped>
@@ -306,6 +345,20 @@ onMounted(loadHistory)
   margin-top: 8px;
   display: flex;
   justify-content: flex-end;
+}
+.model-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.model-name {
+  font-weight: 500;
+  color: #303133;
+}
+.model-provider {
+  font-size: 12px;
+  color: #909399;
+  margin-left: auto;
 }
 .pagination-wrap {
   display: flex;

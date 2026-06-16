@@ -9,6 +9,7 @@ import com.example.dockb.common.BizException;
 import com.example.dockb.common.PageResult;
 import com.example.dockb.common.ResultCode;
 import com.example.dockb.config.AppProperties;
+import reactor.core.publisher.Flux;
 import com.example.dockb.entity.Document;
 import com.example.dockb.entity.DocumentChunk;
 import com.example.dockb.entity.QaHistory;
@@ -62,6 +63,12 @@ public class QaServiceImpl implements QaService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public QaAnswerVO ask(String question, Integer topK) {
+        return ask(question, topK, null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public QaAnswerVO ask(String question, Integer topK, String model) {
         if (question == null || question.isBlank()) {
             throw new BizException(ResultCode.QUESTION_EMPTY);
         }
@@ -83,7 +90,7 @@ public class QaServiceImpl implements QaService {
         List<String> texts = candidates.stream()
                 .map(DocumentChunk::getContent)
                 .collect(Collectors.toList());
-        List<RankedHit> ranked = m3Service.rerankWithFallback(question, texts);
+        List<RankedHit> ranked = m3Service.rerankWithFallback(question, texts, model);
 
         // 3) 选取 top K
         List<Integer> picked = new ArrayList<>();
@@ -113,7 +120,7 @@ public class QaServiceImpl implements QaService {
         }
 
         // 5) 调 M3 问答（带降级）
-        QaResult result = m3Service.answerWithFallback(question, context);
+        QaResult result = m3Service.answerWithFallback(question, context, model);
 
         // 6) 组装 citations
         Map<Long, Document> docMap = lookupDocs(picked, candidates);
@@ -167,6 +174,13 @@ public class QaServiceImpl implements QaService {
                 new LambdaQueryWrapper<QaHistory>().orderByDesc(QaHistory::getCreatedAt));
         List<QaHistoryVO> list = result.getRecords().stream().map(this::toVO).collect(Collectors.toList());
         return PageResult.of(list, result.getTotal(), page, size);
+    }
+
+    @Override
+    public Flux<String> askStream(String question, Integer topK, String model) {
+        int k = topK == null ? 5 : Math.min(Math.max(topK, 1), 20);
+        List<String> context = buildContext(question, k);
+        return m3Service.answerStream(question, context, model);
     }
 
     // ----------------------------- 私有 -----------------------------
