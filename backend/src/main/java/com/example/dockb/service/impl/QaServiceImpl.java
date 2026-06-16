@@ -213,6 +213,47 @@ public class QaServiceImpl implements QaService {
         return vo;
     }
 
+    @Override
+    public List<String> buildContext(String question, Integer topK) {
+        if (question == null || question.isBlank()) {
+            return Collections.emptyList();
+        }
+        int k = (topK == null || topK <= 0) ? 5 : Math.min(topK, 20);
+        int maxCandidates = appProperties.getSearch().getMaxCandidates();
+
+        List<DocumentChunk> candidates = chunkMapper.selectList(
+                new LambdaQueryWrapper<DocumentChunk>()
+                        .like(DocumentChunk::getContent, question.trim())
+                        .last("LIMIT " + maxCandidates));
+
+        if (candidates.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 不做 rerank，直接取前 k 个
+        return candidates.stream()
+                .limit(k)
+                .map(DocumentChunk::getContent)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public void saveHistoryAsync(String question, String answer) {
+        if (question == null && answer == null) {
+            return;
+        }
+        try {
+            QaHistory h = new QaHistory();
+            h.setQuestion(question == null ? "" : question);
+            h.setAnswer(answer == null ? "" : answer);
+            h.setCitations("[]");
+            qaHistoryMapper.insert(h);
+            log.info("[QaService] async save history id={}", h.getId());
+        } catch (Exception e) {
+            log.warn("[QaService] saveHistoryAsync failed: {}", e.getMessage());
+        }
+    }
+
     private QaHistoryVO toVO(QaHistory h) {
         QaHistoryVO vo = new QaHistoryVO();
         vo.setId(h.getId());

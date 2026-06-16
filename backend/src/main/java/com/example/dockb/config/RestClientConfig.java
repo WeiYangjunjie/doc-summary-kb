@@ -24,4 +24,17 @@ public class RestClientConfig {
                 .requestFactory(factory)
                 .build();
     }
+
+    /**
+     * 流式 RestClient：readTimeout 设置较长（5 分钟），以便 SSE 长连接正常工作。
+     */
+    @Bean("streamingRestClient")
+    public RestClient streamingRestClient(M3Properties props) {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout((int) Duration.ofMillis(props.getConnectTimeoutMs()).toMillis());
+        factory.setReadTimeout((int) Duration.ofMinutes(5).toMillis());
+        return RestClient.builder()
+                .requestFactory(factory)
+                .build();
+    }
 }

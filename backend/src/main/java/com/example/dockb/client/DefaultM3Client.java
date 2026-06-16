@@ -9,11 +9,17 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -34,11 +40,15 @@ public class DefaultM3Client implements M3Client {
     private static final Pattern QUOTED_STRING = Pattern.compile("\"([^\"]+)\"");
 
     private final RestClient restClient;
+    private final RestClient streamingRestClient;
     private final M3Properties props;
     private final ObjectMapper objectMapper;
 
-    public DefaultM3Client(RestClient m3RestClient, M3Properties props, ObjectMapper objectMapper) {
+    public DefaultM3Client(RestClient m3RestClient,
+                           @Qualifier("streamingRestClient") RestClient streamingRestClient,
+                           M3Properties props, ObjectMapper objectMapper) {
         this.restClient = m3RestClient;
+        this.streamingRestClient = streamingRestClient;
         this.props = props;
         this.objectMapper = objectMapper;
         if (!props.isKeyConfigured()) {
@@ -328,5 +338,119 @@ public class DefaultM3Client implements M3Client {
             return 1d;
         }
         return v;
+    }
+
+    // ============================ 流式问答 ============================
+
+    @Override
+    public Flux<String> answerStream(String question, List<String> context) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("你是文档问答助手。请仅依据下面提供的【参考资料】回答用户问题。\n");
+        prompt.append("【参考资料】（每条前是 [i] 编号）：\n");
+        if (context != null) {
+            for (int i = 0; i < context.size(); i++) {
+                prompt.append("[").append(i).append("] ").append(truncate(context.get(i), 1500)).append("\n");
+            }
+        }
+        prompt.append("\n用户问题：").append(question).append("\n");
+        prompt.append("要求：\n");
+        prompt.append("1. 仅返回 **严格的 JSON**，形如 {\"answer\":\"...\",\"citations\":[{\"index\":0,\"snippet\":\"...\"}]}；\n");
+        prompt.append("2. citations 必须引用上面资料中的编号；answer 用中文。");
+
+        ChatRequest request = ChatRequest.builder()
+                .model(props.getModel())
+                .stream(true)
+                .messages(List.of(ChatRequest.Message.builder()
+                        .role("user")
+                        .content(prompt.toString())
+                        .build()))
+                .build();
+
+        String url = trimTrailingSlash(props.getBaseUrl()) + "/chat/completions";
+
+        return Flux.create(emitter -> {
+            try {
+                var responseSpec = streamingRestClient.post()
+                        .uri(url)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + props.resolveApiKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(request)
+                        .retrieve()
+                        .body(io.netty.handler.codec.http.HttpHeaders.class);
+
+                // streamingRestClient with RestClient doesn't directly support Flux.
+                // Fallback: use InputStream directly.
+                doStreamAnswer(url, request, emitter);
+            } catch (Exception e) {
+                log.error("[M3] answerStream error: {}", e.getMessage());
+                emitter.error(new M3Exception("M3 streaming failed: " + e.getMessage(), e));
+            }
+        }, FluxSink.OverflowStrategy.BUFFER);
+    }
+
+    /**
+     * 直接用 HttpClient 读 SSE 流，避免 RestClient reactive 类型问题。
+     */
+    private void doStreamAnswer(String url, ChatRequest request, FluxSink<String> emitter) {
+        try {
+            java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+            String jsonBody = objectMapper.writeValueAsString(request);
+
+            var httpRequest = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(url))
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + props.resolveApiKey())
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .header(HttpHeaders.ACCEPT, "text/event-stream")
+                    .timeout(java.time.Duration.ofMinutes(5))
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .build();
+
+            java.net.http.HttpResponse<java.io.InputStream> response = client.send(
+                    httpRequest, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+
+            if (response.statusCode() != 200) {
+                emitter.error(new M3Exception("M3 HTTP " + response.statusCode()));
+                return;
+            }
+
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+                String line;
+                StringBuilder dataBuf = new StringBuilder();
+                while ((line = reader.readLine()) != null) {
+                    if (line.startsWith("data: ")) {
+                        String data = line.substring("data: ".length()).trim();
+                        if ("[DONE]".equals(data)) {
+                            emitter.next("[DONE]");
+                            emitter.complete();
+                            return;
+                        }
+                        // 解析 SSE JSON chunk，提取 delta.content
+                        try {
+                            JsonNode chunk = objectMapper.readTree(data);
+                            JsonNode delta = chunk.path("choices")
+                                    .path(0)
+                                    .path("delta")
+                                    .path("content");
+                            if (!delta.isMissingNode()) {
+                                String token = delta.asText();
+                                emitter.next(token);
+                            }
+                        } catch (JsonProcessingException e) {
+                            // 忽略解析失败的 chunk
+                            log.debug("[M3] stream chunk parse failed: {}", data);
+                        }
+                    }
+                }
+            }
+            if (!emitter.isCancelled()) {
+                emitter.complete();
+            }
+        } catch (Exception e) {
+            log.error("[M3] doStreamAnswer error: {}", e.getMessage());
+            if (!emitter.isCancelled()) {
+                emitter.error(e);
+            }
+        }
     }
 }

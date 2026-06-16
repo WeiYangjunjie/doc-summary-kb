@@ -5,6 +5,8 @@ import com.example.dockb.client.dto.ChatResponse;
 import com.example.dockb.client.dto.QaResult;
 import com.example.dockb.client.dto.RankedHit;
 
+import reactor.core.publisher.Flux;
+
 import java.util.List;
 
 /**
@@ -34,4 +36,11 @@ public interface M3Client {
 
     /** 通用调用入口（用于自定义 prompt）。 */
     ChatResponse chat(ChatRequest request);
+
+    /**
+     * 流式问答：返回一个 Flux，逐 token/逐片段地 emit M3 返回的内容。
+     * SSE 格式，每条 data 为纯文本 token。
+     * 末尾会 emit "[DONE]" 表示流结束。
+     */
+    Flux<String> answerStream(String question, List<String> context);
 }

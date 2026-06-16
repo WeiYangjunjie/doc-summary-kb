@@ -20,6 +20,14 @@
               <el-option :value="5" label="top 5" />
               <el-option :value="10" label="top 10" />
             </el-select>
+            <el-tooltip content="开启后回答会逐字流式显示">
+              <el-switch
+                v-model="streamMode"
+                active-text="流式"
+                inactive-text="普通"
+                style="margin-left:8px"
+              />
+            </el-tooltip>
             <div class="flex-grow" />
             <el-button :icon="Delete" @click="question = ''; currentAnswer = null">清空</el-button>
             <el-button
@@ -28,16 +36,32 @@
               :loading="asking"
               :disabled="!question.trim()"
               @click="onAsk"
-            >提问</el-button>
+            >{{ asking ? (streamMode ? '生成中…' : '处理中…') : '提问' }}</el-button>
           </div>
         </div>
 
-        <div v-if="currentAnswer" class="section-card">
-          <div class="card-title">回答</div>
-          <div class="qa-answer">{{ currentAnswer.answer }}</div>
+        <!-- 回答区域 -->
+        <div v-if="currentAnswer || streamText" class="section-card">
+          <div class="card-title-row">
+            <div class="card-title">回答</div>
+            <el-tag v-if="streamMode && asking" type="info" size="small" effect="plain">
+              <span class="typing-dot" />
+              流式输出中
+            </el-tag>
+            <el-tag v-else-if="!asking && streamMode" type="success" size="small">
+              生成完成
+            </el-tag>
+          </div>
+          <!-- 流式文字区域 -->
+          <div v-if="streamMode" class="qa-answer qa-stream" v-html="streamHtml" />
+          <!-- 普通回答 -->
+          <div v-else-if="currentAnswer?.answer" class="qa-answer">
+            {{ currentAnswer.answer }}
+          </div>
+          <div v-else class="qa-answer qa-placeholder">暂无回答内容</div>
 
           <div class="card-title" style="margin-top:20px">引用来源</div>
-          <el-empty v-if="!currentAnswer.citations?.length" description="该回答未引用任何文档" />
+          <el-empty v-if="!currentAnswer?.citations?.length" description="该回答未引用任何文档" />
           <div v-else>
             <CitationItem
               v-for="(c, i) in currentAnswer.citations"
@@ -109,36 +133,85 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Promotion, Delete, RefreshRight } from '@element-plus/icons-vue'
 import CitationItem from '@/components/CitationItem.vue'
-import { askQuestion, listQaHistory } from '@/api/qa'
+import { askQuestion, askQuestionStream, listQaHistory } from '@/api/qa'
 import { relativeTime } from '@/utils/format'
 
 // 当前提问
 const question = ref('')
 const topK = ref(5)
 const asking = ref(false)
+const streamMode = ref(true) // 默认开启流式
 const currentAnswer = ref(null)
+const streamText = ref('') // 流式累积文字
+let cancelStream = null // 流式取消函数
+
+// 流式 HTML：换行渲染
+const streamHtml = computed(() => {
+  return streamText.value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>')
+})
 
 const onAsk = async () => {
   if (!question.value.trim()) return
+
+  // 取消之前的流式请求
+  if (cancelStream) {
+    cancelStream()
+    cancelStream = null
+  }
+
+  streamText.value = ''
+  currentAnswer.value = null
   asking.value = true
-  try {
-    const data = await askQuestion({
-      question: question.value.trim(),
-      topK: topK.value
-    })
-    currentAnswer.value = data
-    ElMessage.success('已生成回答')
-    loadHistory() // 刷新历史
-  } catch (e) {
-    // 拦截器已提示
-  } finally {
-    asking.value = false
+
+  if (streamMode.value) {
+    // 流式模式
+    cancelStream = askQuestionStream(
+      { question: question.value.trim(), topK: topK.value },
+      {
+        onToken(token) {
+          streamText.value += token
+        },
+        onDone() {
+          asking.value = false
+          ElMessage.success('回答已生成并保存')
+          loadHistory()
+        },
+        onError(err) {
+          asking.value = false
+          ElMessage.error('流式请求失败：' + err.message)
+        },
+      }
+    )
+  } else {
+    // 普通模式
+    try {
+      const data = await askQuestion({
+        question: question.value.trim(),
+        topK: topK.value,
+      })
+      currentAnswer.value = data
+      ElMessage.success('已生成回答')
+      loadHistory()
+    } catch (e) {
+      // 拦截器已提示
+    } finally {
+      asking.value = false
+    }
   }
 }
+
+// 清理：组件卸载时取消流式请求
+onUnmounted(() => {
+  if (cancelStream) cancelStream()
+})
 
 // 历史
 const historyLoading = ref(false)
@@ -154,7 +227,6 @@ const loadHistory = async () => {
     const data = await listQaHistory({ page: historyPage.value, size: historySize.value })
     historyList.value = data.list || []
     historyTotal.value = data.total ?? historyList.value.length
-    // 解析 citations：后端存的是 JSON 字符串
     for (const it of historyList.value) {
       if (typeof it.citations === 'string') {
         try { it.citations = JSON.parse(it.citations) } catch { it.citations = [] }
@@ -193,16 +265,16 @@ onMounted(loadHistory)
   color: #303133;
   margin-bottom: 12px;
 }
-.card-subtitle {
-  font-size: 13px;
-  color: #909399;
-  margin: 8px 0 4px;
-}
 .card-title-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   margin-bottom: 12px;
+}
+.card-subtitle {
+  font-size: 13px;
+  color: #909399;
+  margin: 8px 0 4px;
 }
 .history-item {
   border-bottom: 1px solid #ebeef5;
@@ -239,5 +311,22 @@ onMounted(loadHistory)
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
+}
+.qa-stream {
+  line-height: 1.8;
+  min-height: 40px;
+}
+.qa-placeholder {
+  color: #c0c4cc;
+  font-style: italic;
+}
+.typing-dot::before {
+  content: '●';
+  animation: blink 1s infinite;
+  color: #909399;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 </style>
