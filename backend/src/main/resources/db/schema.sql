@@ -51,9 +51,11 @@ CREATE TABLE IF NOT EXISTS document_chunk (
 
 CREATE TABLE IF NOT EXISTS qa_history (
     id           BIGINT       AUTO_INCREMENT PRIMARY KEY,
+    owner_id     BIGINT       NULL COMMENT '提问者 user.id，NULL 表示匿名问答',
     question     TEXT         NOT NULL,
     answer       MEDIUMTEXT   NOT NULL,
     citations    JSON         NULL COMMENT '引用来源 JSON 数组',
     created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_created (created_at)
+    INDEX idx_created (created_at),
+    INDEX idx_owner (owner_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

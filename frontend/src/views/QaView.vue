@@ -90,7 +90,7 @@
         </div>
       </el-col>
 
-      <!-- 右：历史 -->
+          <!-- 右：历史 -->
       <el-col :xs="24" :md="10">
         <div class="section-card">
           <div class="card-title-row">
@@ -98,7 +98,13 @@
             <el-button :icon="RefreshRight" link @click="loadHistory">刷新</el-button>
           </div>
 
-          <el-empty v-if="!historyLoading && historyList.length === 0" description="暂无历史问答" />
+          <!-- 未登录提示 -->
+          <div v-if="historyNeedsLogin" class="history-login-prompt">
+            <el-icon :size="32" color="#909399"><Warning /></el-icon>
+            <p>登录后可查看问答历史</p>
+            <el-button type="primary" size="small" @click="$router.push('/login')">去登录</el-button>
+          </div>
+          <el-empty v-else-if="!historyLoading && historyList.length === 0" description="暂无历史问答" />
           <el-scrollbar v-else height="600px">
             <div
               v-for="item in historyList"
@@ -153,7 +159,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Promotion, Delete, RefreshRight, Cpu } from '@element-plus/icons-vue'
+import { Promotion, Delete, RefreshRight, Cpu, Warning } from '@element-plus/icons-vue'
 import CitationItem from '@/components/CitationItem.vue'
 import { askQuestion, askQuestionStream, listQaHistory } from '@/api/qa'
 import { listModels } from '@/api/model'
@@ -259,9 +265,11 @@ const historyPage = ref(1)
 const historySize = ref(10)
 const historyTotal = ref(0)
 const expanded = reactive({})
+const historyNeedsLogin = ref(false)
 
 const loadHistory = async () => {
   historyLoading.value = true
+  historyNeedsLogin.value = false
   try {
     const data = await listQaHistory({ page: historyPage.value, size: historySize.value })
     historyList.value = data.list || []
@@ -273,8 +281,13 @@ const loadHistory = async () => {
       if (!Array.isArray(it.citations)) it.citations = []
     }
   } catch (e) {
-    historyList.value = []
-    historyTotal.value = 0
+    // 401 → 未登录，提示用户登录；其他错误静默清空
+    if (e?.response?.status === 401 || e?.status === 401) {
+      historyNeedsLogin.value = true
+    } else {
+      historyList.value = []
+      historyTotal.value = 0
+    }
   } finally {
     historyLoading.value = false
   }
@@ -345,6 +358,20 @@ onMounted(() => { loadModels(); loadHistory() })
   margin-top: 8px;
   display: flex;
   justify-content: flex-end;
+}
+.history-login-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 0;
+  gap: 12px;
+  color: #909399;
+  text-align: center;
+}
+.history-login-prompt p {
+  margin: 0;
+  font-size: 14px;
 }
 .model-option {
   display: flex;

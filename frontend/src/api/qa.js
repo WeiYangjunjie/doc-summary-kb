@@ -21,18 +21,28 @@ export function askQuestionStream(body, { onToken, onDone, onError }) {
   const url = `${apiBase}/api/qa/ask/stream`
 
   const controller = new AbortController()
+  // 从 localStorage 读 JWT token（与 request.js axios 拦截器保持一致）
+  const token = localStorage.getItem('auth_token')
+
   fetch(url, {
     method: 'POST',
     signal: controller.signal,
     headers: {
       'Content-Type': 'application/json',
-      // axios 的拦截器存了 token 到 localStorage
-      'Authorization': localStorage.getItem('token') || '',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(body),
   })
-    .then(res => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    .then(async res => {
+      if (!res.ok) {
+        // 尝试解析后端错误消息
+        let msg = `HTTP ${res.status}`
+        try {
+          const json = await res.json()
+          if (json?.message) msg = json.message
+        } catch { /* ignore */ }
+        throw Object.assign(new Error(msg), { status: res.status })
+      }
       const reader = res.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buffer = ''

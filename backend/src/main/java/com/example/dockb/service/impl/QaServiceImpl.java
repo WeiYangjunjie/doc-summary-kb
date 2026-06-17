@@ -31,8 +31,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -62,13 +64,7 @@ public class QaServiceImpl implements QaService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public QaAnswerVO ask(String question, Integer topK) {
-        return ask(question, topK, null);
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public QaAnswerVO ask(String question, Integer topK, String model) {
+    public QaAnswerVO ask(String question, Integer topK, String model, Long userId, boolean isAdmin) {
         if (question == null || question.isBlank()) {
             throw new BizException(ResultCode.QUESTION_EMPTY);
         }
@@ -76,18 +72,14 @@ public class QaServiceImpl implements QaService {
         if (k <= 0) k = 5;
         if (k > 20) k = 20;
 
-        // 1) 候选 chunks
-        int maxCandidates = appProperties.getSearch().getMaxCandidates();
-        List<DocumentChunk> candidates = chunkMapper.selectList(
-                new LambdaQueryWrapper<DocumentChunk>()
-                        .like(DocumentChunk::getContent, question.trim())
-                        .last("LIMIT " + maxCandidates));
-        if (candidates.isEmpty()) {
-            return saveAndReturn(question, "知识库中暂无相关资料。", Collections.emptyList());
+        // 1) 候选 chunks（权限过滤）
+        List<DocumentChunk> allCandidates = searchVisibleChunks(question.trim(), k * 6, userId, isAdmin);
+        if (allCandidates.isEmpty()) {
+            return saveAndReturn(question, "知识库中暂无相关资料。", Collections.emptyList(), userId);
         }
 
         // 2) 重排
-        List<String> texts = candidates.stream()
+        List<String> texts = allCandidates.stream()
                 .map(DocumentChunk::getContent)
                 .collect(Collectors.toList());
         List<RankedHit> ranked = m3Service.rerankWithFallback(question, texts, model);
@@ -95,18 +87,14 @@ public class QaServiceImpl implements QaService {
         // 3) 选取 top K
         List<Integer> picked = new ArrayList<>();
         if (ranked.isEmpty()) {
-            for (int i = 0; i < candidates.size() && picked.size() < k; i++) {
+            for (int i = 0; i < allCandidates.size() && picked.size() < k; i++) {
                 picked.add(i);
             }
         } else {
             for (RankedHit r : ranked) {
-                if (r.getIndex() < 0 || r.getIndex() >= candidates.size()) {
-                    continue;
-                }
+                if (r.getIndex() < 0 || r.getIndex() >= allCandidates.size()) continue;
                 picked.add(r.getIndex());
-                if (picked.size() >= k) {
-                    break;
-                }
+                if (picked.size() >= k) break;
             }
         }
 
@@ -123,15 +111,13 @@ public class QaServiceImpl implements QaService {
         QaResult result = m3Service.answerWithFallback(question, context, model);
 
         // 6) 组装 citations
-        Map<Long, Document> docMap = lookupDocs(picked, candidates);
+        Map<Long, Document> docMap = lookupDocs(picked, allCandidates);
         List<CitationVO> citations = new ArrayList<>();
         if (result.getCitations() != null) {
             for (QaResult.Citation c : result.getCitations()) {
                 int idx = c.getIndex();
-                if (idx < 0 || idx >= context.size()) {
-                    continue;
-                }
-                DocumentChunk ch = candidates.get(picked.get(idx));
+                if (idx < 0 || idx >= context.size()) continue;
+                DocumentChunk ch = allCandidates.get(picked.get(idx));
                 Document d = docMap.get(ch.getDocumentId());
                 CitationVO vo = new CitationVO();
                 vo.setDocumentId(ch.getDocumentId());
@@ -146,10 +132,9 @@ public class QaServiceImpl implements QaService {
             }
         }
         if (citations.isEmpty()) {
-            // M3 没返回引用，自己造
             for (int i = 0; i < picked.size(); i++) {
                 int idx = picked.get(i);
-                DocumentChunk ch = candidates.get(idx);
+                DocumentChunk ch = allCandidates.get(idx);
                 Document d = docMap.get(ch.getDocumentId());
                 CitationVO vo = new CitationVO();
                 vo.setDocumentId(ch.getDocumentId());
@@ -161,44 +146,123 @@ public class QaServiceImpl implements QaService {
             }
         }
 
-        return saveAndReturn(question, result.getAnswer() == null ? "" : result.getAnswer(), citations);
+        return saveAndReturn(question, result.getAnswer() == null ? "" : result.getAnswer(), citations, userId);
     }
 
     @Override
-    public PageResult<QaHistoryVO> history(long page, long size) {
+    public PageResult<QaHistoryVO> history(long page, long size, Long userId, boolean isAdmin) {
         if (page < 1) page = 1;
         if (size < 1) size = 10;
         if (size > 100) size = 100;
-        Page<QaHistory> result = qaHistoryMapper.selectPage(
-                new Page<>(page, size),
-                new LambdaQueryWrapper<QaHistory>().orderByDesc(QaHistory::getCreatedAt));
+
+        LambdaQueryWrapper<QaHistory> wrapper = new LambdaQueryWrapper<>();
+        // ADMIN 可见所有；普通用户只看自己和匿名的
+        if (!isAdmin) {
+            if (userId != null) {
+                wrapper.and(w -> w.isNull(QaHistory::getOwnerId).or().eq(QaHistory::getOwnerId, userId));
+            } else {
+                wrapper.isNull(QaHistory::getOwnerId);
+            }
+        }
+        wrapper.orderByDesc(QaHistory::getCreatedAt);
+
+        Page<QaHistory> result = qaHistoryMapper.selectPage(new Page<>(page, size), wrapper);
         List<QaHistoryVO> list = result.getRecords().stream().map(this::toVO).collect(Collectors.toList());
         return PageResult.of(list, result.getTotal(), page, size);
     }
 
     @Override
-    public Flux<String> askStream(String question, Integer topK, String model) {
+    public Flux<String> askStream(String question, Integer topK, String model, Long userId, boolean isAdmin) {
         int k = topK == null ? 5 : Math.min(Math.max(topK, 1), 20);
-        List<String> context = buildContext(question, k);
+        List<String> context = buildContext(question, k, userId, isAdmin);
         return m3Service.answerStream(question, context, model);
     }
 
-    // ----------------------------- 私有 -----------------------------
+    @Override
+    public List<String> buildContext(String question, Integer topK, Long userId, boolean isAdmin) {
+        if (question == null || question.isBlank()) {
+            return Collections.emptyList();
+        }
+        int k = (topK == null || topK <= 0) ? 5 : Math.min(topK, 20);
+
+        // 权限过滤
+        List<DocumentChunk> candidates = searchVisibleChunks(question.trim(), k, userId, isAdmin);
+        return candidates.stream()
+                .limit(k)
+                .map(DocumentChunk::getContent)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public void saveHistoryAsync(String question, String answer, Long ownerId) {
+        if (question == null && answer == null) {
+            return;
+        }
+        try {
+            QaHistory h = new QaHistory();
+            h.setQuestion(question == null ? "" : question);
+            h.setAnswer(answer == null ? "" : answer);
+            h.setCitations("[]");
+            h.setOwnerId(ownerId);
+            qaHistoryMapper.insert(h);
+            log.info("[QaService] async save history id={}, ownerId={}", h.getId(), ownerId);
+        } catch (Exception e) {
+            log.warn("[QaService] saveHistoryAsync failed: {}", e.getMessage());
+        }
+    }
+
+    // ----------------------------- 私有方法 -----------------------------
+
+    /**
+     * 权限感知的 chunk 搜索。
+     * ADMIN：所有 chunks；USER：公开(ownerId=null) + 自己的 chunks；匿名：仅公开 chunks。
+     */
+    private List<DocumentChunk> searchVisibleChunks(String keyword, int limit, Long userId, boolean isAdmin) {
+        int maxCandidates = appProperties.getSearch().getMaxCandidates();
+        // 先粗查（不超过 maxCandidates）
+        List<DocumentChunk> candidates = chunkMapper.selectList(
+                new LambdaQueryWrapper<DocumentChunk>()
+                        .like(DocumentChunk::getContent, keyword)
+                        .last("LIMIT " + maxCandidates));
+        if (candidates.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 取关联文档做权限过滤
+        Set<Long> docIds = candidates.stream()
+                .map(DocumentChunk::getDocumentId)
+                .collect(Collectors.toSet());
+        Map<Long, Document> docMap = new HashMap<>();
+        if (!docIds.isEmpty()) {
+            documentMapper.selectBatchIds(docIds).forEach(d -> docMap.put(d.getId(), d));
+        }
+
+        Set<Long> visibleDocIds = new HashSet<>();
+        for (Document d : docMap.values()) {
+            if (isAdmin) {
+                visibleDocIds.add(d.getId());
+            } else if (d.getOwnerId() == null) {
+                visibleDocIds.add(d.getId()); // 公开文档
+            } else if (userId != null && d.getOwnerId().equals(userId)) {
+                visibleDocIds.add(d.getId()); // 自己的文档
+            }
+        }
+
+        return candidates.stream()
+                .filter(c -> visibleDocIds.contains(c.getDocumentId()))
+                .collect(Collectors.toList());
+    }
 
     private double scoreAt(List<RankedHit> ranked, int candidateIdx) {
         for (RankedHit r : ranked) {
-            if (r.getIndex() == candidateIdx) {
-                return r.getScore();
-            }
+            if (r.getIndex() == candidateIdx) return r.getScore();
         }
         return 0d;
     }
 
     private Map<Long, Document> lookupDocs(List<Integer> picked, List<DocumentChunk> candidates) {
         Map<Long, Document> map = new HashMap<>();
-        if (picked.isEmpty()) {
-            return map;
-        }
+        if (picked.isEmpty()) return map;
         List<Long> ids = picked.stream().map(candidates::get).map(DocumentChunk::getDocumentId).distinct().collect(Collectors.toList());
         if (!ids.isEmpty()) {
             documentMapper.selectBatchIds(ids).forEach(d -> map.put(d.getId(), d));
@@ -206,10 +270,11 @@ public class QaServiceImpl implements QaService {
         return map;
     }
 
-    private QaAnswerVO saveAndReturn(String question, String answer, List<CitationVO> citations) {
+    private QaAnswerVO saveAndReturn(String question, String answer, List<CitationVO> citations, Long ownerId) {
         QaHistory h = new QaHistory();
         h.setQuestion(question);
         h.setAnswer(answer == null ? "" : answer);
+        h.setOwnerId(ownerId);
         try {
             h.setCitations(objectMapper.writeValueAsString(citations == null ? Collections.emptyList() : citations));
         } catch (Exception e) {
@@ -225,47 +290,6 @@ public class QaServiceImpl implements QaService {
         vo.setCitations(citations == null ? Collections.emptyList() : citations);
         vo.setCreatedAt(h.getCreatedAt());
         return vo;
-    }
-
-    @Override
-    public List<String> buildContext(String question, Integer topK) {
-        if (question == null || question.isBlank()) {
-            return Collections.emptyList();
-        }
-        int k = (topK == null || topK <= 0) ? 5 : Math.min(topK, 20);
-        int maxCandidates = appProperties.getSearch().getMaxCandidates();
-
-        List<DocumentChunk> candidates = chunkMapper.selectList(
-                new LambdaQueryWrapper<DocumentChunk>()
-                        .like(DocumentChunk::getContent, question.trim())
-                        .last("LIMIT " + maxCandidates));
-
-        if (candidates.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        // 不做 rerank，直接取前 k 个
-        return candidates.stream()
-                .limit(k)
-                .map(DocumentChunk::getContent)
-                .collect(Collectors.toList());
-    }
-
-    @Override
-    public void saveHistoryAsync(String question, String answer) {
-        if (question == null && answer == null) {
-            return;
-        }
-        try {
-            QaHistory h = new QaHistory();
-            h.setQuestion(question == null ? "" : question);
-            h.setAnswer(answer == null ? "" : answer);
-            h.setCitations("[]");
-            qaHistoryMapper.insert(h);
-            log.info("[QaService] async save history id={}", h.getId());
-        } catch (Exception e) {
-            log.warn("[QaService] saveHistoryAsync failed: {}", e.getMessage());
-        }
     }
 
     private QaHistoryVO toVO(QaHistory h) {

@@ -1,9 +1,12 @@
 package com.example.dockb.controller;
 
 import com.example.dockb.common.Result;
+import com.example.dockb.config.CurrentUser;
 import com.example.dockb.dto.QaAskRequest;
 import com.example.dockb.service.QaService;
+import com.example.dockb.util.AuthContext;
 import com.example.dockb.vo.QaAnswerVO;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -17,6 +20,13 @@ import reactor.core.publisher.Flux;
 
 /**
  * 问答接口（契约 §5.4）。
+ *
+ * <p>权限说明：
+ * <ul>
+ *   <li>问答题源：只检索当前用户有权限的文档（与 search 一致）</li>
+ *   <li>历史记录：ADMIN 可见全部；USER 可见自己和匿名记录</li>
+ *   <li>history 接口：需要登录（未登录返回 401）</li>
+ * </ul>
  */
 @Slf4j
 @RestController
@@ -29,21 +39,30 @@ public class QaController {
         this.qaService = qaService;
     }
 
+    /**
+     * 同步问答（可匿名调用，但只能检索公开文档）。
+     */
     @PostMapping("/ask")
-    public Result<QaAnswerVO> ask(@Valid @RequestBody QaAskRequest req) {
-        log.info("[QA] ask: question={}, topK={}, model={}", req.getQuestion(), req.getTopK(), req.getModel());
-        return Result.success(qaService.ask(req.getQuestion(), req.getTopK(), req.getModel()));
+    public Result<QaAnswerVO> ask(@Valid @RequestBody QaAskRequest req, HttpServletRequest request) {
+        Long userId = AuthContext.getUserId(request);
+        boolean isAdmin = AuthContext.isAdmin(request);
+        log.info("[QA] ask: question={}, topK={}, model={}, userId={}, isAdmin={}",
+                req.getQuestion(), req.getTopK(), req.getModel(), userId, isAdmin);
+        return Result.success(qaService.ask(req.getQuestion(), req.getTopK(), req.getModel(), userId, isAdmin));
     }
 
     /**
-     * 流式问答 SSE 端点。
+     * 流式问答 SSE 端点（可匿名调用，但只能检索公开文档）。
      * 逐 token 返回 M3 生成内容，前端可逐字显示。
      * 最终发送 [DONE] 后，异步将完整答案存入历史。
      */
     @PostMapping(value = "/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> askStream(@Valid @RequestBody QaAskRequest req) {
-        log.info("[QA] stream ask: question={}, topK={}, model={}", req.getQuestion(), req.getTopK(), req.getModel());
-        Flux<String> stream = qaService.askStream(req.getQuestion(), req.getTopK(), req.getModel());
+    public Flux<String> askStream(@Valid @RequestBody QaAskRequest req, HttpServletRequest request) {
+        Long userId = AuthContext.getUserId(request);
+        boolean isAdmin = AuthContext.isAdmin(request);
+        log.info("[QA] stream ask: question={}, topK={}, model={}, userId={}, isAdmin={}",
+                req.getQuestion(), req.getTopK(), req.getModel(), userId, isAdmin);
+        Flux<String> stream = qaService.askStream(req.getQuestion(), req.getTopK(), req.getModel(), userId, isAdmin);
 
         // 收集完整答案，结束后异步存库
         StringBuilder fullAnswer = new StringBuilder();
@@ -56,17 +75,23 @@ public class QaController {
                 .doOnComplete(() -> {
                     String answer = fullAnswer.toString();
                     log.info("[QA] stream done, answer length={}", answer.length());
-                    try {
-                        qaService.saveHistoryAsync(req.getQuestion(), answer);
-                    } catch (Exception e) {
-                        log.warn("[QA] save history async failed: {}", e.getMessage());
-                    }
+                    qaService.saveHistoryAsync(req.getQuestion(), answer, userId);
                 });
     }
 
+    /**
+     * 问答历史（需要登录）。
+     * ADMIN 可见全部；USER 可见自己和匿名记录。
+     */
     @GetMapping("/history")
     public Result<?> history(@RequestParam(defaultValue = "1") long page,
-                             @RequestParam(defaultValue = "10") long size) {
-        return Result.success(qaService.history(page, size));
+                             @RequestParam(defaultValue = "10") long size,
+                             HttpServletRequest request) {
+        Long userId = AuthContext.getUserId(request);
+        if (userId == null) {
+            return Result.fail(401, "请先登录后查看历史记录");
+        }
+        boolean isAdmin = AuthContext.isAdmin(request);
+        return Result.success(qaService.history(page, size, userId, isAdmin));
     }
 }
