@@ -26,6 +26,10 @@
           <el-icon><ChatLineRound /></el-icon>
           <span>智能问答</span>
         </el-menu-item>
+        <el-menu-item v-if="auth.isAdmin" index="/admin/users">
+          <el-icon><Setting /></el-icon>
+          <span>用户管理</span>
+        </el-menu-item>
       </el-menu>
       <div class="header-right">
         <el-tag :type="health.ok ? 'success' : 'danger'" size="small">
@@ -71,7 +75,7 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Document, House, Folder, ChatLineRound, Avatar, ArrowDown, SwitchButton } from '@element-plus/icons-vue'
+import { Document, House, Folder, ChatLineRound, Avatar, ArrowDown, SwitchButton, Setting } from '@element-plus/icons-vue'
 import { checkHealth } from '@/api/health'
 import { useAuthStore } from '@/stores/auth'
 
@@ -83,6 +87,7 @@ const activeMenu = computed(() => {
   // 详情页仍高亮"文档管理"
   if (route.path.startsWith('/documents')) return '/documents'
   if (route.path.startsWith('/qa')) return '/qa'
+  if (route.path.startsWith('/admin')) return '/admin/users'
   return route.path
 })
 

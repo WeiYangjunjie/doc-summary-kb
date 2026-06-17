@@ -43,6 +43,12 @@ const routes = [
         name: 'qa',
         component: () => import('@/views/QaView.vue'),
         meta: { title: '智能问答' }
+      },
+      {
+        path: 'admin/users',
+        name: 'admin-users',
+        component: () => import('@/views/AdminUserView.vue'),
+        meta: { title: '用户管理', admin: true }
       }
     ]
   },
@@ -65,6 +71,16 @@ router.beforeEach((to, from) => {
   // guest 路由（login/register）：已登录则跳首页
   if (to.meta?.guest && auth.isLoggedIn) {
     return '/'
+  }
+
+  // admin 路由：未登录跳转登录页；非管理员跳转首页
+  if (to.meta?.admin) {
+    if (!auth.isLoggedIn) {
+      return { path: '/login', query: { redirect: to.fullPath } }
+    }
+    if (!auth.isAdmin) {
+      return '/'
+    }
   }
 
   return true
