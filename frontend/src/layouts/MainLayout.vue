@@ -46,6 +46,12 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
+                <router-link to="/change-password" custom #default="{ navigate }">
+                  <el-dropdown-item @click="navigate">
+                    <el-icon><Lock /></el-icon>
+                    修改密码
+                  </el-dropdown-item>
+                </router-link>
                 <el-dropdown-item command="logout">
                   <el-icon><SwitchButton /></el-icon>
                   退出登录
@@ -75,7 +81,7 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Document, House, Folder, ChatLineRound, Avatar, ArrowDown, SwitchButton, Setting } from '@element-plus/icons-vue'
+import { Document, House, Folder, ChatLineRound, Avatar, ArrowDown, SwitchButton, Setting, Lock } from '@element-plus/icons-vue'
 import { checkHealth } from '@/api/health'
 import { useAuthStore } from '@/stores/auth'
 

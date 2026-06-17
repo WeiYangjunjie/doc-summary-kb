@@ -16,6 +16,12 @@ const routes = [
     meta: { title: '注册', guest: true }
   },
   {
+    path: '/change-password',
+    name: 'change-password',
+    component: () => import('@/views/ChangePasswordView.vue'),
+    meta: { title: '修改密码' }
+  },
+  {
     path: '/',
     component: () => import('@/layouts/MainLayout.vue'),
     children: [
@@ -71,6 +77,11 @@ router.beforeEach((to, from) => {
   // guest 路由（login/register）：已登录则跳首页
   if (to.meta?.guest && auth.isLoggedIn) {
     return '/'
+  }
+
+  // 修改密码页：必须已登录
+  if (to.name === 'change-password' && !auth.isLoggedIn) {
+    return { path: '/login', query: { redirect: to.fullPath } }
   }
 
   // admin 路由：未登录跳转登录页；非管理员跳转首页

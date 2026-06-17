@@ -15,3 +15,11 @@ export function register(data) {
 export function login(data) {
   return request.post('/auth/login', data)
 }
+
+/**
+ * 修改当前登录用户的密码
+ * @param {{ oldPassword: string, newPassword: string }} data
+ */
+export function changePassword(data) {
+  return request.put('/auth/password', data)
+}

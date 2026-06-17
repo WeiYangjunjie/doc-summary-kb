@@ -3,6 +3,7 @@ package com.example.dockb.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.dockb.common.BizException;
 import com.example.dockb.common.ResultCode;
+import com.example.dockb.dto.ChangePasswordRequest;
 import com.example.dockb.dto.LoginRequest;
 import com.example.dockb.dto.RegisterRequest;
 import com.example.dockb.entity.User;
@@ -63,5 +64,22 @@ public class AuthServiceImpl implements AuthService {
         String token = jwtUtil.sign(user.getId(), user.getUsername(), user.getRole());
         log.info("[Auth] user logged in: id={}, username={}", user.getId(), user.getUsername());
         return new AuthVO(user.getId(), user.getUsername(), user.getRole(), token);
+    }
+
+    @Override
+    public void changePassword(Long userId, ChangePasswordRequest req) {
+        if (userId == null) {
+            throw new BizException(ResultCode.UNAUTHORIZED);
+        }
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BizException(ResultCode.UNAUTHORIZED);
+        }
+        if (!encoder.matches(req.getOldPassword(), user.getPassword())) {
+            throw new IllegalArgumentException("旧密码不正确");
+        }
+        user.setPassword(encoder.encode(req.getNewPassword()));
+        userMapper.updateById(user);
+        log.info("[Auth] password changed: userId={}", userId);
     }
 }

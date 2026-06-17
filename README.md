@@ -124,6 +124,19 @@ npm run dev
 > 若 `mvn` 不在环境里，可装 Maven 或用项目自带的 Maven Wrapper（如果后期加入）。  
 > 若 `minimax` Key 暂时没拿到，也能跑起来 —— 上传后摘要/分类会进入"降级"分支，列表/检索/删除不受影响。
 
+#### 默认账号（初始化数据库后可用）
+
+```powershell
+# 执行种子数据（位于 backend/src/main/resources/db/data-seed.sql）
+Get-Content .\backend\src\main\resources\db\data-seed.sql | & mysql -u root -p
+
+# 然后登录：
+# admin / Admin@123456   → 管理员，可进入「用户管理」面板
+# test  / Test@123456   → 普通用户
+```
+
+> ⚠️ 建议首次登录后立即修改密码（点击右上角用户名 → 修改密码）。
+
 ---
 
 ## 5. 截图占位（演示用）

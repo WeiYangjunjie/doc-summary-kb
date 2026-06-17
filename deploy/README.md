@@ -90,6 +90,32 @@ mysql -u root -p < docs/design/SCHEMA.sql
 
 预期输出包含三张表：`document`、`document_chunk`、`qa_history`。
 
+### 3.4 插入种子数据（默认账号）
+
+```powershell
+# PowerShell
+Get-Content ".\backend\src\main\resources\db\data-seed.sql" | & mysql -u root -p
+```
+
+```cmd
+# cmd
+mysql -u root -p < backend\src\main\resources\db\data-seed.sql
+```
+
+```bash
+# bash
+mysql -u root -p < backend/src/main/resources/db/data-seed.sql
+```
+
+**插入后账号：**
+
+| 用户名 | 密码 | 角色 |
+|--------|------|------|
+| admin | `Admin@123456` | ADMIN（管理员） |
+| test  | `Test@123456`  | USER（普通用户） |
+
+> ⚠️ 种子数据使用 `INSERT IGNORE`，重复执行不会覆盖。
+
 ---
 
 ## 4. 启动后端（Spring Boot）
